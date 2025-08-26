@@ -1,146 +1,75 @@
-import logging
-from flask import render_template, request, redirect, url_for, flash, jsonify
-from server.python.database.db_manager import load_tasks, add_task, update_task, delete_task, mark_task
-from server.python.database.model import validate_task_description, validate_priority
+from flask import request, jsonify
 
-logger = logging.getLogger(__name__)
+# OR to be more explicit:
+# CORS(app, resources={r"/api/*": {"origins": "http://localhost:3000"}})
+
+from server.python.database.db_manager import (
+    load_tasks,
+    add_task,
+    update_task,
+    delete_task,
+    mark_task
+)
+from server.python.database.model import (
+    validate_task_description,
+    validate_priority
+)
 
 def register_routes(app):
-    """Register all Flask routes with the app."""
+    @app.route("/api/v1/tasks", methods=["GET"])
+    def get_tasks():
+        tasks = load_tasks()
+        return jsonify(tasks)
 
-    @app.route('/')
-    def index():
-        logger.info("Rendering index page")
-        try:
-            tasks = load_tasks()
-            return render_template('index.html', tasks=tasks)
-        except Exception as e:
-            logger.error(f"Error loading tasks: {e}")
-            flash('An error occurred while loading tasks.', 'error')
-            return render_template('index.html', tasks=[])
-
-    @app.route('/add', methods=['POST'])
+    @app.route("/api/v1/add/tasks", methods=["POST"])
     def add():
-        description = request.form.get('description')
-        priority = request.form.get('priority', 'Medium')  # Default to Medium
+        data = request.json
+        description = data.get("description")
+        priority = data.get("priority", "low")
 
-        # Validate description
-        is_valid, error_message = validate_task_description(description)
-        if not is_valid:
-            logger.warning(f"Invalid task description: {error_message}")
-            if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-                return jsonify({'message': error_message, 'status': 'error'})
-            flash(error_message, 'error')
-            return redirect(url_for('index'))
+        if not validate_task_description(description):
+            return jsonify({"status": "error", "message": "Invalid task description"}), 400
 
-        # Validate priority
         if not validate_priority(priority):
-            logger.warning("Invalid priority provided, defaulting to Medium")
-            priority = 'Medium'
+            return jsonify({"status": "error", "message": "Invalid priority"}), 400
 
-        try:
-            task_id = add_task(description, priority)
-            message = f'Task added: {description} (ID: {task_id}, Priority: {priority})'
-            status = 'success'
-        except Exception as e:
-            logger.error(f"Error adding task: {e}")
-            message = 'Failed to add task. Please try again.'
-            status = 'error'
-        
-        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-            return jsonify({'message': message, 'status': status})
-        flash(message, status)
-        return redirect(url_for('index'))
+        task_id = add_task(description, priority)
+        return jsonify({"status": "success", "task_id": task_id})
 
-    @app.route('/update/<int:task_id>', methods=['POST'])
+    @app.route("/api/v1/update/<int:task_id>", methods=["PUT"])
     def update(task_id):
-        new_description = request.form.get('description')
-        new_priority = request.form.get('priority')
+        data = request.json
+        description = data.get("description")
+        priority = data.get("priority", "Medium")
 
-        # Validate description
-        is_valid, error_message = validate_task_description(new_description)
-        if not is_valid:
-            logger.warning(f"Invalid task description: {error_message}")
-            if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-                return jsonify({'message': error_message, 'status': 'error'})
-            flash(error_message, 'error')
-            return redirect(url_for('index'))
+        if not validate_task_description(description):
+            return jsonify({"status": "error", "message": "Invalid task description"}), 400
 
-        # Validate priority
-        if not validate_priority(new_priority):
-            logger.warning("Invalid priority provided, defaulting to Medium")
-            new_priority = 'Medium'
+        if not validate_priority(priority):
+            return jsonify({"status": "error", "message": "Invalid priority"}), 400
 
-        try:
-            if update_task(task_id, new_description, new_priority):
-                message = f'Task updated: {new_description} (ID: {task_id}, Priority: {new_priority})'
-                status = 'success'
-            else:
-                message = f'Task ID {task_id} not found.'
-                status = 'error'
-        except Exception as e:
-            logger.error(f"Error updating task ID {task_id}: {e}")
-            message = 'Failed to update task. Please try again.'
-            status = 'error'
-        
-        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-            return jsonify({'message': message, 'status': status})
-        flash(message, status)
-        return redirect(url_for('index'))
+        updated = update_task(task_id, description, priority)
+        if updated:
+            return jsonify({"status": "success"})
+        return jsonify({"status": "error", "message": "Task not found"}), 404
 
-    @app.route('/delete/<int:task_id>')
+    @app.route("/api/v1/delete/<int:task_id>", methods=["DELETE"])
     def delete(task_id):
-        try:
-            if delete_task(task_id):
-                message = f'Task ID {task_id} deleted.'
-                status = 'success'
-            else:
-                message = f'Task ID {task_id} not found.'
-                status = 'error'
-        except Exception as e:
-            logger.error(f"Error deleting task ID {task_id}: {e}")
-            message = 'Failed to delete task. Please try again.'
-            status = 'error'
-        
-        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-            return jsonify({'message': message, 'status': status})
-        flash(message, status)
-        return redirect(url_for('index'))
+        deleted = delete_task(task_id)
+        if deleted:
+            return jsonify({"status": "success"})
+        return jsonify({"status": "error", "message": "Task not found"}), 404
 
-    @app.route('/complete/<int:task_id>')
+    @app.route("/api/v1/complete/<int:task_id>", methods=["PUT"])
     def complete(task_id):
-        try:
-            if mark_task(task_id, completed=True):
-                message = f'Task ID {task_id} marked as completed.'
-                status = 'success'
-            else:
-                message = f'Task ID {task_id} not found.'
-                status = 'error'
-        except Exception as e:
-            logger.error(f"Error marking task ID {task_id} as complete: {e}")
-            message = 'Failed to mark task as complete. Please try again.'
-            status = 'error'
-        
-        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-            return jsonify({'message': message, 'status': status})
-        flash(message, status)
-        return redirect(url_for('index'))
+        marked = mark_task(task_id, True)
+        if marked:
+            return jsonify({"status": "success"})
+        return jsonify({"status": "error", "message": "Task not found"}), 404
 
-    @app.route('/incomplete/<int:task_id>')
+    @app.route("/api/v1/incomplete/<int:task_id>", methods=["PUT"])
     def incomplete(task_id):
-        try:
-            if mark_task(task_id, completed=False):
-                message = f'Task ID {task_id} marked as incomplete.'
-                status = 'success'
-            else:
-                message = f'Task ID {task_id} not found.'
-                status = 'error'
-        except Exception as e:
-            logger.error(f"Error marking task ID {task_id} as incomplete: {e}")
-            message = 'Failed to mark task as incomplete. Please try again.'
-            status = 'error'
-        
-        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-            return jsonify({'message': message, 'status': status})
-        flash(message, status)
-        return redirect(url_for('index'))
+        marked = mark_task(task_id, False)
+        if marked:
+            return jsonify({"status": "success"})
+        return jsonify({"status": "error", "message": "Task not found"}), 404
